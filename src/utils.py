@@ -1,7 +1,8 @@
+import re
 import requests
 import uuid
 from cachetools import cached, TTLCache
-from typing import Dict, List, Tuple, Union, Optional
+from typing import Dict, List, Tuple, Union
 
 import logging
 # Enable logging
@@ -26,23 +27,21 @@ class SushiroUtils:
         response = SushiroUtils._get_response_json(queue_info_url.format(store_id))
         if not response:
             return []
-        return response
+        return [re.split('-', s)[0] for s in response]
 
     @staticmethod
     @cached(cache=TTLCache(ttl=600, maxsize=1000))
-    def get_all_stores_info() -> Tuple[Dict, Dict]:
+    def get_all_stores_info() -> Dict:
         lat = 22.307338
         long = 114.171603
 
         response = SushiroUtils._get_response_json(all_stores_url.format(lat, long, str(uuid.uuid4())))
         store_dict = {}
-        reversed_dict = {}
         for r in response:
             store_dict[str(r['id'])] = dict(
                 name=r['name'],
                 lat=r['latitude'],
                 long=r['longitude']
             )
-            reversed_dict[r['name']] = r['id']
-        return store_dict, reversed_dict
+        return store_dict
 

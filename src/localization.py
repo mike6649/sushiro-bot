@@ -13,12 +13,15 @@ class Messages:
     entered_queue_pls_wait: str
     almost_ready: str
 
-    def display_store_info(self, store_name: str, current_queue: int) -> str:
+    def display_store_info(self, store_name: str, current_queue: str) -> str:
         return f"{self.store_chosen.format(store_name)}\n" \
                 f"{self.current_queue_is.format(current_queue)}"
 
     def store_chosen_ask_queue_number(self, store_name, current_queue) -> str:
         return f"{self.display_store_info(store_name, current_queue)}\n{self.ask_queue_number}"
+
+    def almost_read_queue_now(self, current_queue) -> str:
+        return f"{self.almost_ready}\n{self.current_queue_is.format(current_queue)}"
 
 
 EnglishMessages = Messages(
@@ -29,7 +32,7 @@ EnglishMessages = Messages(
     ask_queue_number='What is your queue number?',
     current_queue_is='Currently on queue #{}.',
     store_closed="{} is currently closed.",
-    entered_queue_pls_wait="We will let you know when your table #{} is ready!",
+    entered_queue_pls_wait="We will let you know when your table {} is ready!",
     almost_ready="You are almost ready!"
 )
 

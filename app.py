@@ -15,7 +15,7 @@ bot.
 
 import logging
 
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     Updater,
     CommandHandler,
@@ -23,7 +23,11 @@ from telegram.ext import (
     Filters,
     ConversationHandler,
     CallbackContext,
+    CallbackQueryHandler
 )
+from src.localization import localization
+from src.dal import ContextDal as Dal
+from src.utils import SushiroUtils
 
 # Enable logging
 logging.basicConfig(
@@ -32,36 +36,88 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-GENDER, PHOTO, LOCATION, BIO = range(4)
+STORE, LANGUAGE, LOCATION, QUEUE = range(4)
 
 
 def start(update: Update, context: CallbackContext) -> int:
     """Starts the conversation and asks the user about their gender."""
-    reply_keyboard = [['Boy', 'Girl', 'Other']]
+    update.message.reply_text('Hello! I am sushiro bot. Send /cancel to stop this conversation.')
 
     update.message.reply_text(
-        'Hi! My name is Professor Bot. I will hold a conversation with you. '
-        'Send /cancel to stop talking to me.\n\n'
-        'Are you a boy or a girl?',
-        reply_markup=ReplyKeyboardMarkup(
-            reply_keyboard, one_time_keyboard=True, input_field_placeholder='Boy or Girl?'
-        ),
+        'Please choose a language',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(v.language_text, callback_data=f"language:{k}")
+                                            for k, v in localization.items()]])
     )
 
-    return GENDER
+    return LANGUAGE
 
 
-def gender(update: Update, context: CallbackContext) -> int:
+def handle_language(update: Update, context: CallbackContext) -> int:
     """Stores the selected gender and asks for a photo."""
-    user = update.message.from_user
-    logger.info("Gender of %s: %s", user.first_name, update.message.text)
-    update.message.reply_text(
-        'I see! Please send me a photo of yourself, '
-        'so I know what you look like, or send /skip if you don\'t want to.',
-        reply_markup=ReplyKeyboardRemove(),
-    )
+    query = update.callback_query
+    query.answer()
+    user = query.from_user.username
+    lan = query.data.split(':')[1]
+    Dal.save_language(user, lan, context)
 
-    return PHOTO
+    store_dict = SushiroUtils.get_all_stores_info()
+    store_list = [InlineKeyboardButton(v['name'], callback_data=f"store:{k}") for k, v in store_dict.items()]
+    n = 3
+    store_list = [store_list[i:i+n] for i in range(0, len(store_list), n)]
+
+    query.edit_message_text(localization[lan].choose_store, reply_markup=InlineKeyboardMarkup(store_list))
+
+    return STORE
+
+
+def handle_store(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    query.answer()
+    user = query.from_user.username
+    lan = Dal.get_language(user, context)
+    store_id = query.data.split(':')[1]
+
+    store_dict = SushiroUtils.get_all_stores_info()
+    store = store_dict[store_id]
+    Dal.save_store_id(user, store_id, context)
+
+    queue_numbers = SushiroUtils.get_queue_info(store_id=store_id)
+    if not queue_numbers:
+        query.edit_message_text(localization[lan].store_closed)
+    else:
+        query.edit_message_text(localization[lan].display_store_info(store['name'], ', '.join(queue_numbers)))
+
+    query.message.reply_text(localization[lan].ask_queue_number)
+    return QUEUE
+
+
+def poll_queue(context: CallbackContext) -> None:
+    job = context.job
+    user_data = job.context
+    queue_numbers = SushiroUtils.get_queue_info(user_data['store_id'])
+    queue_numbers_int = [int(q) for q in queue_numbers]
+    lan = user_data['language']
+
+    max_queue = max(queue_numbers_int, default=-1)
+    if max_queue == -1:
+        return
+
+    if user_data['queue_number'] - max_queue < 5:
+        context.bot.send_message(job.context['chat_id'],
+                                 text=localization[lan].almost_read_queue_now(', '.join(queue_numbers)))
+        context.job.schedule_removal()
+
+
+def handle_queue_input(update: Update, context: CallbackContext) -> int:
+    user = update.message.from_user.username
+    queue_num = int(update.message.text)
+    Dal.save_queue_number(user, queue_num, context)
+    chat_id = update.message.chat_id
+    Dal.save_chat_id(user, chat_id, context)
+    lan = Dal.get_language(user, context)
+    context.job_queue.run_repeating(poll_queue, interval=10, context=context.user_data, name=str(chat_id))
+    update.message.reply_text(text=localization[lan].entered_queue_pls_wait.format(queue_num))
+    return 1
 
 
 def photo(update: Update, context: CallbackContext) -> int:
@@ -88,31 +144,6 @@ def skip_photo(update: Update, context: CallbackContext) -> int:
     return LOCATION
 
 
-def location(update: Update, context: CallbackContext) -> int:
-    """Stores the location and asks for some info about the user."""
-    user = update.message.from_user
-    user_location = update.message.location
-    logger.info(
-        "Location of %s: %f / %f", user.first_name, user_location.latitude, user_location.longitude
-    )
-    update.message.reply_text(
-        'Maybe I can visit you sometime! At last, tell me something about yourself.'
-    )
-
-    return BIO
-
-
-def skip_location(update: Update, context: CallbackContext) -> int:
-    """Skips the location and asks for info about the user."""
-    user = update.message.from_user
-    logger.info("User %s did not send a location.", user.first_name)
-    update.message.reply_text(
-        'You seem a bit paranoid! At last, tell me something about yourself.'
-    )
-
-    return BIO
-
-
 def bio(update: Update, context: CallbackContext) -> int:
     """Stores the info about the user and ends the conversation."""
     user = update.message.from_user
@@ -133,21 +164,20 @@ def cancel(update: Update, context: CallbackContext) -> int:
     return ConversationHandler.END
 
 
-def main() -> None:
+def main(token: str) -> None:
     """Run the bot."""
     # Create the Updater and pass it your bot's token.
-    updater = Updater("TOKEN")
+    updater = Updater(token)
 
     # Get the dispatcher to register handlers
     dispatcher = updater.dispatcher
 
-    # Add conversation handler with the states GENDER, PHOTO, LOCATION and BIO
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            LANGUAGE: [MessageHandler(Filters.regex('^(Boy|Girl|Other)$'), gender)],
-            STORE: [MessageHandler(Filters.photo, photo), CommandHandler('skip', skip_photo)],
-            QUEUE: [MessageHandler(Filters.text & ~Filters.command, bio)],
+            LANGUAGE: [CallbackQueryHandler(handle_language, pattern="^language:.+")],
+            STORE: [CallbackQueryHandler(handle_store, pattern="^store:.+")],
+            QUEUE: [MessageHandler(Filters.regex("^[1-9][0-9]*$"), handle_queue_input)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
     )
@@ -164,4 +194,5 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    main()
+    f = open("token.txt", "r")
+    main(str(f.read()))
