@@ -45,7 +45,7 @@ class ContextDal(SushiroDalInterface):
 
     @staticmethod
     def get_language(username: str, context: CallbackContext):
-        return context.user_data['language']
+        return context.user_data.get('language', 'zh')
 
     @staticmethod
     def save_queue_number(username: str, queue_number: int, context: CallbackContext):
@@ -53,7 +53,7 @@ class ContextDal(SushiroDalInterface):
 
     @staticmethod
     def get_queue_number(username: str, context: CallbackContext):
-        return context.user_data['language']
+        return context.user_data.get('queue_number')
 
     @staticmethod
     def save_store_id(username: str, store_id: str, context: CallbackContext):
@@ -61,7 +61,7 @@ class ContextDal(SushiroDalInterface):
 
     @staticmethod
     def get_store_id(username: str, context: CallbackContext):
-        return context.user_data['store_id']
+        return context.user_data.get('store_id')
 
     @staticmethod
     def save_chat_id(username: str, chat_id: int, context: CallbackContext):
@@ -69,4 +69,4 @@ class ContextDal(SushiroDalInterface):
 
     @staticmethod
     def get_chat_id(username: str, context: CallbackContext):
-        return context.user_data['chat_id']
+        return context.user_data.get('chat_id')

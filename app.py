@@ -12,10 +12,10 @@ Send /start to initiate the conversation.
 Press Ctrl-C on the command line or send a signal to the process to stop the
 bot.
 """
-
+import hashlib
 import logging
 
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import ReplyKeyboardRemove, Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     Updater,
     CommandHandler,
@@ -25,6 +25,7 @@ from telegram.ext import (
     CallbackContext,
     CallbackQueryHandler
 )
+from typing import List, Tuple
 from src.localization import localization
 from src.dal import ContextDal as Dal
 from src.utils import SushiroUtils
@@ -37,14 +38,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 STORE, LANGUAGE, LOCATION, QUEUE = range(4)
+POLL_INTERVAL = 10
+ALERT_LIST = [5, 4, 3, 2, 1]  # when to trigger each queue alert
 
 
 def start(update: Update, context: CallbackContext) -> int:
     """Starts the conversation and asks the user about their gender."""
-    update.message.reply_text('Hello! I am sushiro bot. Send /cancel to stop this conversation.')
+    update.message.reply_text('\n'.join([msg.welcome for msg in localization.values()]))
 
     update.message.reply_text(
-        'Please choose a language',
+        '\n'.join([msg.choose_langauage for msg in localization.values()]),
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(v.language_text, callback_data=f"language:{k}")
                                             for k, v in localization.items()]])
     )
@@ -62,8 +65,8 @@ def handle_language(update: Update, context: CallbackContext) -> int:
 
     store_dict = SushiroUtils.get_all_stores_info()
     store_list = [InlineKeyboardButton(v['name'], callback_data=f"store:{k}") for k, v in store_dict.items()]
-    n = 3
-    store_list = [store_list[i:i+n] for i in range(0, len(store_list), n)]
+    no_of_cols = 3
+    store_list = [store_list[i:i+no_of_cols] for i in range(0, len(store_list), no_of_cols)]
 
     query.edit_message_text(localization[lan].choose_store, reply_markup=InlineKeyboardMarkup(store_list))
 
@@ -83,7 +86,8 @@ def handle_store(update: Update, context: CallbackContext) -> int:
 
     queue_numbers = SushiroUtils.get_queue_info(store_id=store_id)
     if not queue_numbers:
-        query.edit_message_text(localization[lan].store_closed)
+        query.edit_message_text(localization[lan].store_closed.format(store['name']))
+        return ConversationHandler.END
     else:
         query.edit_message_text(localization[lan].display_store_info(store['name'], ', '.join(queue_numbers)))
 
@@ -91,21 +95,46 @@ def handle_store(update: Update, context: CallbackContext) -> int:
     return QUEUE
 
 
+def get_wait_progress(tables_left: int) -> int:
+    for i, n in enumerate(ALERT_LIST):
+        if tables_left > n:
+            return i
+    else:
+        return len(ALERT_LIST)
+
+
+def get_current_queue(store_id: int) -> Tuple[int, List]:
+    queue_numbers = SushiroUtils.get_queue_info(store_id)
+    queue_numbers_int = [int(q) for q in queue_numbers]
+    return max(queue_numbers_int, default=-1), queue_numbers_int
+
+
 def poll_queue(context: CallbackContext) -> None:
     job = context.job
-    user_data = job.context
-    queue_numbers = SushiroUtils.get_queue_info(user_data['store_id'])
-    queue_numbers_int = [int(q) for q in queue_numbers]
+    # noinspection PyTypeChecker
+    user_data: dict = job.context
     lan = user_data['language']
 
-    max_queue = max(queue_numbers_int, default=-1)
+    max_queue, queue_numbers = get_current_queue(user_data['store_id'])
     if max_queue == -1:
         return
 
-    if user_data['queue_number'] - max_queue < 5:
-        context.bot.send_message(job.context['chat_id'],
-                                 text=localization[lan].almost_read_queue_now(', '.join(queue_numbers)))
+    tables_left = user_data['queue_number'] - max_queue
+    cur_wait_progress = get_wait_progress(tables_left)
+    if cur_wait_progress <= user_data.get('wait_progress', 0):
+        # no updates
+        return
+    queues_txt = ', '.join(queue_numbers)
+    if cur_wait_progress == len(ALERT_LIST):
+        context.bot.send_message(user_data['chat_id'],
+                                 text=localization[lan].final_call_queue_now(queues_txt))
         context.job.schedule_removal()
+        return
+
+    context.bot.send_message(user_data['chat_id'],
+                             text=localization[lan].almost_ready_queue_now(queues_txt, tables_left))
+
+    user_data['wait_progress'] = cur_wait_progress
 
 
 def handle_queue_input(update: Update, context: CallbackContext) -> int:
@@ -115,53 +144,64 @@ def handle_queue_input(update: Update, context: CallbackContext) -> int:
     chat_id = update.message.chat_id
     Dal.save_chat_id(user, chat_id, context)
     lan = Dal.get_language(user, context)
-    context.job_queue.run_repeating(poll_queue, interval=10, context=context.user_data, name=str(chat_id))
+    context.job_queue.run_repeating(poll_queue, interval=POLL_INTERVAL,
+                                    context=context.user_data, name=str(chat_id))
     update.message.reply_text(text=localization[lan].entered_queue_pls_wait.format(queue_num))
-    return 1
-
-
-def photo(update: Update, context: CallbackContext) -> int:
-    """Stores the photo and asks for a location."""
-    user = update.message.from_user
-    photo_file = update.message.photo[-1].get_file()
-    photo_file.download('user_photo.jpg')
-    logger.info("Photo of %s: %s", user.first_name, 'user_photo.jpg')
-    update.message.reply_text(
-        'Gorgeous! Now, send me your location please, or send /skip if you don\'t want to.'
-    )
-
-    return LOCATION
-
-
-def skip_photo(update: Update, context: CallbackContext) -> int:
-    """Skips the photo and asks for a location."""
-    user = update.message.from_user
-    logger.info("User %s did not send a photo.", user.first_name)
-    update.message.reply_text(
-        'I bet you look great! Now, send me your location please, or send /skip.'
-    )
-
-    return LOCATION
-
-
-def bio(update: Update, context: CallbackContext) -> int:
-    """Stores the info about the user and ends the conversation."""
-    user = update.message.from_user
-    logger.info("Bio of %s: %s", user.first_name, update.message.text)
-    update.message.reply_text('Thank you! I hope we can talk again some day.')
-
     return ConversationHandler.END
+
+
+def handle_bad_queue_input(update: Update, context: CallbackContext) -> int:
+    user = update.message.from_user.username
+    lan = Dal.get_language(user, context)
+
+    update.message.reply_text(text=localization[lan].bad_queue_input)
+    return QUEUE
 
 
 def cancel(update: Update, context: CallbackContext) -> int:
     """Cancels and ends the conversation."""
-    user = update.message.from_user
-    logger.info("User %s canceled the conversation.", user.first_name)
     update.message.reply_text(
         'Bye! I hope we can talk again some day.', reply_markup=ReplyKeyboardRemove()
     )
-
+    jobs = context.job_queue.get_jobs_by_name(str(update.message.chat_id))
+    for job in jobs:
+        job.schedule_removal()
     return ConversationHandler.END
+
+
+def show_queue_info(update: Update, context: CallbackContext):
+    chat_id = update.message.chat_id
+    lan = Dal.get_language('', context)
+    jobs = context.job_queue.get_jobs_by_name(str(chat_id))
+    if jobs and len(jobs):
+        user_queue = jobs[0].context.get('queue_number', 0)
+        store_id = jobs[0].context.get('store_id', None)
+        if not store_id or not user_queue:
+            return
+        max_queue, queue_numbers = get_current_queue(store_id)
+        if max_queue == -1:
+            return
+        localization[lan].almost_ready_queue_now(queue_numbers, max_queue - user_queue)
+
+
+def command_help(update: Update, context: CallbackContext):
+    username = update.message.from_user.username
+    lan = Dal.get_language(username, context)
+    if not lan:
+        update.message.reply_text('\n'.join([lan.help_msg for lan in localization.values()]))
+    else:
+        update.message.reply_text(localization[lan].help_msg)
+
+
+def handle_every_message(update: Update, context: CallbackContext):
+    username = update.message.from_user.username
+    show_queue_info(update, context)
+
+    lan = Dal.get_language(username, context)
+    if not lan:
+        update.message.reply_text('\n'.join([lan.help_msg for lan in localization.values()]))
+    else:
+        update.message.reply_text(localization[lan].help_msg)
 
 
 def main(token: str) -> None:
@@ -177,12 +217,15 @@ def main(token: str) -> None:
         states={
             LANGUAGE: [CallbackQueryHandler(handle_language, pattern="^language:.+")],
             STORE: [CallbackQueryHandler(handle_store, pattern="^store:.+")],
-            QUEUE: [MessageHandler(Filters.regex("^[1-9][0-9]*$"), handle_queue_input)],
+            QUEUE: [MessageHandler(Filters.regex("^[1-9][0-9]*$"), handle_queue_input),
+                    MessageHandler(Filters.text, handle_bad_queue_input)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
     )
 
     dispatcher.add_handler(conv_handler)
+    dispatcher.add_handler(CommandHandler('help', command_help))
+    dispatcher.add_handler(MessageHandler(~Filters.command, handle_every_message))
 
     # Start the Bot
     updater.start_polling()
