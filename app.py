@@ -12,7 +12,6 @@ Send /start to initiate the conversation.
 Press Ctrl-C on the command line or send a signal to the process to stop the
 bot.
 """
-import hashlib
 import logging
 
 from telegram import ReplyKeyboardRemove, Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -26,7 +25,7 @@ from telegram.ext import (
     CallbackQueryHandler
 )
 from typing import List, Tuple
-from src.localization import localization
+from src.localization import localization, Messages
 from src.dal import ContextDal as Dal
 from src.utils import SushiroUtils
 
@@ -43,11 +42,10 @@ ALERT_LIST = [5, 4, 3, 2, 1]  # when to trigger each queue alert
 
 
 def start(update: Update, context: CallbackContext) -> int:
-    """Starts the conversation and asks the user about their gender."""
     update.message.reply_text('\n'.join([msg.welcome for msg in localization.values()]))
 
     update.message.reply_text(
-        '\n'.join([msg.choose_langauage for msg in localization.values()]),
+        '\n'.join([msg.choose_language for msg in localization.values()]),
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(v.language_text, callback_data=f"language:{k}")
                                             for k, v in localization.items()]])
     )
@@ -56,7 +54,6 @@ def start(update: Update, context: CallbackContext) -> int:
 
 
 def handle_language(update: Update, context: CallbackContext) -> int:
-    """Stores the selected gender and asks for a photo."""
     query = update.callback_query
     query.answer()
     user = query.from_user.username
@@ -86,11 +83,11 @@ def handle_store(update: Update, context: CallbackContext) -> int:
 
     queue_numbers = SushiroUtils.get_queue_info(store_id=store_id)
     if not queue_numbers:
-        query.edit_message_text(localization[lan].store_closed.format(store['name']))
+        query.edit_message_text(localization[lan].store_closed.format(store['name']), parse_mode="MarkdownV2")
         return ConversationHandler.END
-    else:
-        query.edit_message_text(localization[lan].display_store_info(store['name'], ', '.join(queue_numbers)))
 
+    query.edit_message_text(localization[lan].display_store_info(store['name'], ', '.join(queue_numbers)),
+                            parse_mode="MarkdownV2")
     query.message.reply_text(localization[lan].ask_queue_number)
     return QUEUE
 
@@ -122,17 +119,18 @@ def poll_queue(context: CallbackContext) -> None:
     tables_left = user_data['queue_number'] - max_queue
     cur_wait_progress = get_wait_progress(tables_left)
     if cur_wait_progress <= user_data.get('wait_progress', 0):
-        # no updates
         return
     queues_txt = ', '.join(queue_numbers)
     if cur_wait_progress == len(ALERT_LIST):
         context.bot.send_message(user_data['chat_id'],
-                                 text=localization[lan].final_call_queue_now(queues_txt))
+                                 text=localization[lan].final_call_queue_now(queues_txt),
+                                 parse_mode="MarkdownV2")
         context.job.schedule_removal()
         return
 
     context.bot.send_message(user_data['chat_id'],
-                             text=localization[lan].almost_ready_queue_now(queues_txt, tables_left))
+                             text=localization[lan].almost_ready_queue_now(queues_txt, tables_left),
+                             parse_mode="MarkdownV2")
 
     user_data['wait_progress'] = cur_wait_progress
 
@@ -160,8 +158,9 @@ def handle_bad_queue_input(update: Update, context: CallbackContext) -> int:
 
 def cancel(update: Update, context: CallbackContext) -> int:
     """Cancels and ends the conversation."""
+    lan = Dal.get_language('', context)
     update.message.reply_text(
-        'Bye! I hope we can talk again some day.', reply_markup=ReplyKeyboardRemove()
+        localization[lan].goodbye, reply_markup=ReplyKeyboardRemove()
     )
     jobs = context.job_queue.get_jobs_by_name(str(update.message.chat_id))
     for job in jobs:
@@ -193,6 +192,10 @@ def command_help(update: Update, context: CallbackContext):
         update.message.reply_text(localization[lan].help_msg)
 
 
+def command_about(update: Update, context: CallbackContext):
+    update.message.reply_text(Messages.about, parse_mode="MarkdownV2")
+
+
 def handle_every_message(update: Update, context: CallbackContext):
     username = update.message.from_user.username
     show_queue_info(update, context)
@@ -206,9 +209,8 @@ def handle_every_message(update: Update, context: CallbackContext):
 
 def main(token: str) -> None:
     """Run the bot."""
-    # Create the Updater and pass it your bot's token.
+    # Create the Updater and pass it your bots token.
     updater = Updater(token)
-
     # Get the dispatcher to register handlers
     dispatcher = updater.dispatcher
 
@@ -225,6 +227,7 @@ def main(token: str) -> None:
 
     dispatcher.add_handler(conv_handler)
     dispatcher.add_handler(CommandHandler('help', command_help))
+    dispatcher.add_handler(CommandHandler('about', command_about))
     dispatcher.add_handler(MessageHandler(~Filters.command, handle_every_message))
 
     # Start the Bot
