@@ -1,4 +1,5 @@
-#Sushiro Telegram Bot
+# Sushiro Telegram Bot
+
 Tired of long waiting times at Sushiro (HK)?
 sushiro-bot is a Telegram Bot that lets you know when your table is
 almost ready.
