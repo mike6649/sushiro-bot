@@ -20,7 +20,7 @@ class Messages:
     help_msg: str
     about: str = "Find my source code on [GitHub](https://github.com/mike6649/sushiro-bot)\\!\n" \
                  "sushiro\\_hk\\_bot is created by [banhooves](https://t.me/banhooves)\n" \
-                 "All rights belong to Sushiro HK"
+                 "I am not affiliated with Sushiro HK."
 
     def display_store_info(self, store_name: str, current_queue: str) -> str:
         return f"{self.store_chosen.format(store_name)}\n" \
