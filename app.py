@@ -1,18 +1,17 @@
 #!/usr/bin/env python
 # pylint: disable=C0116,W0613
-# This program is dedicated to the public domain under the CC0 license.
 
 """
 First, a few callback functions are defined. Then, those functions are passed to
 the Dispatcher and registered at their respective places.
 Then, the bot is started and runs until we press Ctrl-C on the command line.
 Usage:
-Example of a bot-user conversation using ConversationHandler.
 Send /start to initiate the conversation.
 Press Ctrl-C on the command line or send a signal to the process to stop the
 bot.
 """
 import logging
+import sys
 
 from telegram import ReplyKeyboardRemove, Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -37,8 +36,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 STORE, LANGUAGE, LOCATION, QUEUE = range(4)
-POLL_INTERVAL = 10
-ALERT_LIST = [5, 4, 3, 2, 1]  # when to trigger each queue alert
+POLL_INTERVAL = 30
+ALERT_LIST = [10, 5, 2]  # when to trigger each queue alert
 
 
 def start(update: Update, context: CallbackContext) -> int:
@@ -114,6 +113,9 @@ def poll_queue(context: CallbackContext) -> None:
 
     max_queue, queue_numbers = get_current_queue(user_data['store_id'])
     if max_queue == -1:
+        context.bot.send_message(user_data['chat_id'],
+                                 text=localization[lan].this_store_closed_no_more_msgs)
+        context.job.schedule_removal()
         return
 
     tables_left = user_data['queue_number'] - max_queue
@@ -141,6 +143,9 @@ def handle_queue_input(update: Update, context: CallbackContext) -> int:
     Dal.save_queue_number(user, queue_num, context)
     chat_id = update.message.chat_id
     Dal.save_chat_id(user, chat_id, context)
+    jobs = context.job_queue.get_jobs_by_name(str(update.message.chat_id))
+    for job in jobs:
+        job.schedule_removal()
     lan = Dal.get_language(user, context)
     context.job_queue.run_repeating(poll_queue, interval=POLL_INTERVAL,
                                     context=context.user_data, name=str(chat_id))
@@ -240,5 +245,8 @@ def main(token: str) -> None:
 
 
 if __name__ == '__main__':
-    f = open("token.txt", "r")
+    file_name = "token.txt"
+    if len(sys.argv) > 1:
+        file_name = sys.argv[1]
+    f = open(file_name, "r")
     main(str(f.read()))
