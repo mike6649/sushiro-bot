@@ -42,14 +42,14 @@ EnglishMessages = Messages(
     goodbye='Until next time!',
     choose_language='Please choose a language',
     choose_store='Please choose a store',
-    store_chosen='You have chosen *{}*.',
+    store_chosen='You have chosen *{}*\\.',
     ask_queue_number='What is your queue number?',
-    current_queue_is='Currently on queue #{}.',
+    current_queue_is='Currently on queue {}',
     store_closed="Sorry, *{}* is currently closed\\. Try again later",
     this_store_closed_no_more_msgs="Sorry, this store is currently closed. I will stop sending you notifications",
     entered_queue_pls_wait="We will let you know when table {} is almost ready!",
     bad_queue_input="Sorry, please enter a valid number",
-    almost_ready="Your table is almost ready",
+    almost_ready="Your table is almost ready\\!",
     still_have_n_tables="Still *{}* tables to go\\!",
     help_msg="/start - Start talking to me\n"
              "/cancel - Stop talking to me\n"

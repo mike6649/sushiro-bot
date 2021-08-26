@@ -35,7 +35,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-STORE, LANGUAGE, LOCATION, QUEUE = range(4)
+STORE, LANGUAGE, LOCATION, QUEUE, WAITING = range(5)
 POLL_INTERVAL = 30
 ALERT_LIST = [10, 5, 2]  # when to trigger each queue alert
 
@@ -102,7 +102,7 @@ def get_wait_progress(tables_left: int) -> int:
 def get_current_queue(store_id: int) -> Tuple[int, List]:
     queue_numbers = SushiroUtils.get_queue_info(store_id)
     queue_numbers_int = [int(q) for q in queue_numbers]
-    return max(queue_numbers_int, default=-1), queue_numbers_int
+    return max(queue_numbers_int, default=-1), queue_numbers
 
 
 def poll_queue(context: CallbackContext) -> None:
@@ -177,15 +177,21 @@ def show_queue_info(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
     lan = Dal.get_language('', context)
     jobs = context.job_queue.get_jobs_by_name(str(chat_id))
-    if jobs and len(jobs):
+    if jobs:
         user_queue = jobs[0].context.get('queue_number', 0)
         store_id = jobs[0].context.get('store_id', None)
         if not store_id or not user_queue:
+            command_help(update, context)
             return
         max_queue, queue_numbers = get_current_queue(store_id)
         if max_queue == -1:
-            return
-        localization[lan].almost_ready_queue_now(queue_numbers, max_queue - user_queue)
+            return WAITING
+        update.message.reply_text(
+            text=localization[lan].almost_ready_queue_now(', '.join(queue_numbers), user_queue - max_queue),
+            parse_mode="MarkdownV2")
+    else:
+        command_help(update, context)
+    return WAITING
 
 
 def command_help(update: Update, context: CallbackContext):
@@ -203,7 +209,6 @@ def command_about(update: Update, context: CallbackContext):
 
 def handle_every_message(update: Update, context: CallbackContext):
     username = update.message.from_user.username
-    show_queue_info(update, context)
 
     lan = Dal.get_language(username, context)
     if not lan:
@@ -233,6 +238,7 @@ def main(token: str) -> None:
     dispatcher.add_handler(conv_handler)
     dispatcher.add_handler(CommandHandler('help', command_help))
     dispatcher.add_handler(CommandHandler('about', command_about))
+    dispatcher.add_handler(CommandHandler('status', show_queue_info))
     dispatcher.add_handler(MessageHandler(~Filters.command, handle_every_message))
 
     # Start the Bot

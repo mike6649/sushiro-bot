@@ -22,7 +22,7 @@ class SushiroUtils:
         return requests.get(f"{base_url}{url}").json()
 
     @staticmethod
-    @cached(cache=TTLCache(ttl=60, maxsize=1000))
+    @cached(cache=TTLCache(ttl=30, maxsize=1000))
     def get_queue_info(store_id: Union[int, str]) -> List:
         response = SushiroUtils._get_response_json(queue_info_url.format(store_id))
         if not response:
